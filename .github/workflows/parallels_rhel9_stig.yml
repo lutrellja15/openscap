@@ -8,26 +8,20 @@ jobs:
     runs-on: self-hosted    # your Mac with Parallels + runner
 
     env:
-      # Your base VM's UUID (the one you gave me)
       VM_TEMPLATE_UUID: 7458f26b-71a8-4ddb-8b63-c030a4cc2bd7
-
-      # Name for each cloned VM (unique per workflow run)
       VM_NAME: rhel9-baseline-${{ github.run_id }}
-
-      # SSH user inside the RHEL VM
-      SSH_USER: root
+      SSH_USER: maintainer     # <<< changed
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # 1) Clone from the template UUID into a new VM with name $VM_NAME
+      # Clone template VM
       - name: Clone Parallels VM from template UUID
         run: |
           echo "[PRL] Cloning template UUID '$VM_TEMPLATE_UUID' to '$VM_NAME'..."
           prlctl clone "$VM_TEMPLATE_UUID" --name "$VM_NAME" --linked
 
-          echo "[PRL] Getting UUID for new VM '$VM_NAME'..."
           VM_UUID=$(prlctl list -i "$VM_NAME" | awk '/^ID:/ {print $2}')
           if [ -z "$VM_UUID" ]; then
             echo "[PRL] Failed to get UUID for $VM_NAME"
@@ -37,77 +31,50 @@ jobs:
           echo "[PRL] New VM UUID: $VM_UUID"
           echo "VM_UUID=$VM_UUID" >> $GITHUB_ENV
 
-      # 2) Start the new VM
+      # Start VM
       - name: Start VM
         run: |
-          echo "[PRL] Starting VM with UUID $VM_UUID..."
           prlctl start "$VM_UUID"
 
-      # 3) Get IP address from 'IP Addresses:' line in prlctl output
+      # Get IP address from Parallels
       - name: Get VM IP address from prlctl
         run: |
-          echo "[PRL] Getting IP for VM '$VM_NAME'..."
           for i in {1..30}; do
-            IP=$(prlctl list -i "$VM_NAME" | awk -F'IP Addresses: ' '/IP Addresses:/ {print $2}' | cut -d',' -f1) || true
-
+            IP=$(prlctl list -i "$VM_NAME" | awk -F'IP Addresses: ' '/IP Addresses:/ {print $2}' | cut -d',' -f1)
             if [ -n "$IP" ]; then
-              echo "[PRL] VM IP detected: $IP"
               echo "VM_IP=$IP" >> $GITHUB_ENV
               exit 0
             fi
-
-            echo "[PRL] No IP yet ($i/30)..."
             sleep 5
           done
-
-          echo "[PRL] Failed to retrieve IP for VM"
           exit 1
 
-      # 4) Wait for ping
+      # Wait for ping
       - name: Wait for host to respond to ping
         run: |
-          echo "[WAIT] Waiting for $VM_IP to respond to ping..."
           for i in {1..60}; do
-            if ping -c1 -W1 "$VM_IP" &>/dev/null; then
-              echo "[WAIT] Host is up."
-              exit 0
-            fi
-            echo "[WAIT] Not up yet ($i/60)..."
+            if ping -c1 -W1 "$VM_IP" &>/dev/null; then exit 0; fi
             sleep 5
           done
-
-          echo "[WAIT] Host never came up."
           exit 1
 
-      # 5) Wait for SSH
+      # Wait for SSH port
       - name: Wait for SSH to be ready
         run: |
-          echo "[WAIT] Waiting for SSH on $VM_IP:22..."
           for i in {1..60}; do
-            if nc -z "$VM_IP" 22; then
-              echo "[WAIT] SSH is ready."
-              exit 0
-            fi
-            echo "[WAIT] SSH not ready yet ($i/60)..."
+            if nc -z "$VM_IP" 22; then exit 0; fi
             sleep 5
           done
-
-          echo "[WAIT] SSH never became ready."
           exit 1
 
-      # 6) SSH in, install OpenSCAP if needed, run STIG scan + remediate
-      #    IMPORTANT: we ALWAYS exit 0 from this step and write the oscap exit code to a file.
+      # Run OpenSCAP scan & remediation
       - name: Run OpenSCAP STIG scan + remediate on VM
         run: |
-          echo "[SSH] Connecting to $SSH_USER@$VM_IP to run OpenSCAP..."
           ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP" 'bash -s' << 'EOF'
           set -euo pipefail
 
-          echo "[REMOTE] OS info:"
-          cat /etc/os-release || true
-
-          echo "[REMOTE] Ensuring OpenSCAP + SCAP content are installed..."
-          if ! command -v oscap >/dev/null 2>&1; then
+          # Ensure OpenSCAP is installed
+          if ! command -v oscap >/dev/null; then
             sudo dnf install -y openscap-scanner scap-security-guide
           fi
 
@@ -115,12 +82,11 @@ jobs:
           CONTENT="/usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml"
           OUT_DIR="/var/tmp/openscap"
 
-          mkdir -p "$OUT_DIR"
+          sudo mkdir -p "$OUT_DIR"
           cd "$OUT_DIR"
 
-          echo "[REMOTE] Running STIG scan + remediation..."
           set +e
-          oscap xccdf eval \
+          sudo oscap xccdf eval \
             --profile "$PROFILE_ID" \
             --remediate \
             --results-arf results-arf.xml \
@@ -129,23 +95,20 @@ jobs:
           OSCAP_RC=$?
           set -e
 
-          echo "[REMOTE] OpenSCAP exit code: $OSCAP_RC"
-          echo "$OSCAP_RC" > "$OUT_DIR/oscap_exit_code"
-
-          # Always exit 0 from the SSH script so the pipeline can continue
+          echo "$OSCAP_RC" | sudo tee "$OUT_DIR/oscap_exit_code" >/dev/null
           exit 0
           EOF
 
-      # 7) Copy results back to the Mac runner (even if oscap "failed")
+      # Copy results back
       - name: Copy OpenSCAP reports from VM
         if: always()
         run: |
           mkdir -p openscap-output
-          scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP:/var/tmp/openscap/report.html" openscap-output/ || echo "[WARN] report.html not found"
-          scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP:/var/tmp/openscap/results-arf.xml" openscap-output/ || echo "[WARN] results-arf.xml not found"
+          scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP:/var/tmp/openscap/report.html" openscap-output/ || true
+          scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP:/var/tmp/openscap/results-arf.xml" openscap-output/ || true
           scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP:/var/tmp/openscap/oscap_exit_code" openscap-output/ || echo "1" > openscap-output/oscap_exit_code
 
-      # 8) Upload artifacts to GitHub (always)
+      # Upload artifacts
       - name: Upload OpenSCAP artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -153,35 +116,17 @@ jobs:
           name: openscap-report
           path: openscap-output/*
 
-      # 9) Decide pass/fail based on OpenSCAP exit code
+      # Fail build if OpenSCAP returned non-zero
       - name: Fail job if OpenSCAP reported failures
         if: always()
         run: |
-          if [ -f openscap-output/oscap_exit_code ]; then
-            CODE=$(cat openscap-output/oscap_exit_code)
-          else
-            CODE=1
-          fi
-
+          CODE=$(cat openscap-output/oscap_exit_code || echo 1)
           echo "OpenSCAP exit code: $CODE"
+          if [ "$CODE" -ne 0 ]; then exit 1; fi
 
-          # 0 = success, anything else = fail the job
-          if [ "$CODE" -ne 0 ]; then
-            echo "::error::OpenSCAP scan failed with exit code $CODE"
-            exit 1
-          fi
-
-          echo "OpenSCAP scan completed successfully."
-
-      # 10) Cleanup the cloned VM
+      # Delete cloned VM
       - name: Stop and delete VM (cleanup)
         if: always()
         run: |
-          if [ -n "${VM_UUID:-}" ]; then
-            echo "[PRL] Stopping VM $VM_UUID..."
-            prlctl stop "$VM_UUID" --kill || true
-            echo "[PRL] Deleting VM $VM_UUID..."
-            prlctl delete "$VM_UUID" || true
-          else
-            echo "[PRL] No VM_UUID set, skipping cleanup."
-          fi
+          prlctl stop "$VM_UUID" --kill || true
+          prlctl delete "$VM_UUID" || true
