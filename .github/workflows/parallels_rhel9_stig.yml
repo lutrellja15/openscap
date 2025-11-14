@@ -10,7 +10,7 @@ jobs:
     env:
       VM_TEMPLATE_UUID: 7458f26b-71a8-4ddb-8b63-c030a4cc2bd7
       VM_NAME: rhel9-baseline-${{ github.run_id }}
-      SSH_USER: maintainer     # Using maintainer account
+      SSH_USER: maintainer     # maintainer account on the VM
 
     steps:
       - name: Checkout repo
@@ -118,10 +118,11 @@ jobs:
           sudo mkdir -p "$OUT_DIR"
           cd "$OUT_DIR"
 
-          echo "[REMOTE] Running scan + remediation..."
+          echo "[REMOTE] Running scan + remediation (skipping sudo NOPASSWD removal rule)..."
           set +e
           sudo oscap xccdf eval \
             --profile "$PROFILE_ID" \
+            --skip-rule xccdf_org.ssgproject.content_rule_sudo_remove_nopasswd \
             --remediate \
             --results-arf results-arf.xml \
             --report report.html \
