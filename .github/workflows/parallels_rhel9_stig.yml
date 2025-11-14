@@ -96,6 +96,7 @@ jobs:
           exit 1
 
       # 6) SSH in, install OpenSCAP if needed, run STIG scan + remediate
+      #    IMPORTANT: we ALWAYS exit 0 from this step and write the oscap exit code to a file.
       - name: Run OpenSCAP STIG scan + remediate on VM
         run: |
           echo "[SSH] Connecting to $SSH_USER@$VM_IP to run OpenSCAP..."
@@ -118,31 +119,61 @@ jobs:
           cd "$OUT_DIR"
 
           echo "[REMOTE] Running STIG scan + remediation..."
+          set +e
           oscap xccdf eval \
             --profile "$PROFILE_ID" \
             --remediate \
             --results-arf results-arf.xml \
             --report report.html \
             "$CONTENT"
+          OSCAP_RC=$?
+          set -e
 
-          echo "[REMOTE] OpenSCAP STIG scan + remediation completed."
+          echo "[REMOTE] OpenSCAP exit code: $OSCAP_RC"
+          echo "$OSCAP_RC" > "$OUT_DIR/oscap_exit_code"
+
+          # Always exit 0 from the SSH script so the pipeline can continue
+          exit 0
           EOF
 
-      # 7) Copy results back to the Mac runner
+      # 7) Copy results back to the Mac runner (even if oscap "failed")
       - name: Copy OpenSCAP reports from VM
+        if: always()
         run: |
           mkdir -p openscap-output
-          scp -o StrictHostKeyChecking=no "$SSH_USER@$VM_IP:/var/tmp/openscap/report.html" openscap-output/
-          scp -o StrictHostKeyChecking=no "$SSH_USER@$VM_IP:/var/tmp/openscap/results-arf.xml" openscap-output/
+          scp -o StrictHostKeyChecking=no "$SSH_USER@$VM_IP:/var/tmp/openscap/report.html" openscap-output/ || echo "[WARN] report.html not found"
+          scp -o StrictHostKeyChecking=no "$SSH_USER@$VM_IP:/var/tmp/openscap/results-arf.xml" openscap-output/ || echo "[WARN] results-arf.xml not found"
+          scp -o StrictHostKeyChecking=no "$SSH_USER@$VM_IP:/var/tmp/openscap/oscap_exit_code" openscap-output/ || echo "1" > openscap-output/oscap_exit_code
 
-      # 8) Upload artifacts to GitHub
+      # 8) Upload artifacts to GitHub (always)
       - name: Upload OpenSCAP artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: openscap-report
           path: openscap-output/*
 
-      # 9) Cleanup the cloned VM
+      # 9) Decide pass/fail based on OpenSCAP exit code
+      - name: Fail job if OpenSCAP reported failures
+        if: always()
+        run: |
+          if [ -f openscap-output/oscap_exit_code ]; then
+            CODE=$(cat openscap-output/oscap_exit_code)
+          else
+            CODE=1
+          fi
+
+          echo "OpenSCAP exit code: $CODE"
+
+          # 0 = success, anything else = fail the job
+          if [ "$CODE" -ne 0 ]; then
+            echo "::error::OpenSCAP scan failed with exit code $CODE"
+            exit 1
+          fi
+
+          echo "OpenSCAP scan completed successfully."
+
+      # 10) Cleanup the cloned VM
       - name: Stop and delete VM (cleanup)
         if: always()
         run: |
