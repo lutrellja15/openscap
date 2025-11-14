@@ -122,7 +122,6 @@ jobs:
           set +e
           sudo oscap xccdf eval \
             --profile "$PROFILE_ID" \
-            \
             # ==== HIGH-RISK RULES SKIPPED TO AVOID BRICKING THE VM ====
             --skip-rule xccdf_org.ssgproject.content_rule_sudo_remove_nopasswd \
             --skip-rule xccdf_org.ssgproject.content_rule_require_single_user_mode_auth \
