@@ -10,70 +10,103 @@ jobs:
     env:
       VM_TEMPLATE_UUID: 7458f26b-71a8-4ddb-8b63-c030a4cc2bd7
       VM_NAME: rhel9-baseline-${{ github.run_id }}
-      SSH_USER: maintainer     # <<< changed
+      SSH_USER: maintainer     # Using maintainer account
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Clone template VM
+      #######################################################################
+      # 1. CLONE VM
+      #######################################################################
       - name: Clone Parallels VM from template UUID
         run: |
-          echo "[PRL] Cloning template UUID '$VM_TEMPLATE_UUID' to '$VM_NAME'..."
+          echo "[PRL] Cloning template UUID '$VM_TEMPLATE_UUID' into '$VM_NAME'..."
           prlctl clone "$VM_TEMPLATE_UUID" --name "$VM_NAME" --linked
 
           VM_UUID=$(prlctl list -i "$VM_NAME" | awk '/^ID:/ {print $2}')
           if [ -z "$VM_UUID" ]; then
-            echo "[PRL] Failed to get UUID for $VM_NAME"
+            echo "[PRL] ERROR: Could not determine UUID for cloned VM."
             exit 1
           fi
 
           echo "[PRL] New VM UUID: $VM_UUID"
           echo "VM_UUID=$VM_UUID" >> $GITHUB_ENV
 
-      # Start VM
+      #######################################################################
+      # 2. START VM
+      #######################################################################
       - name: Start VM
         run: |
+          echo "[PRL] Starting VM $VM_UUID..."
           prlctl start "$VM_UUID"
 
-      # Get IP address from Parallels
+      #######################################################################
+      # 3. GET IP ADDRESS
+      #######################################################################
       - name: Get VM IP address from prlctl
         run: |
+          echo "[PRL] Waiting for VM to report an IP..."
           for i in {1..30}; do
             IP=$(prlctl list -i "$VM_NAME" | awk -F'IP Addresses: ' '/IP Addresses:/ {print $2}' | cut -d',' -f1)
             if [ -n "$IP" ]; then
+              echo "[PRL] Found VM IP: $IP"
               echo "VM_IP=$IP" >> $GITHUB_ENV
               exit 0
             fi
+            echo "[PRL] No IP yet ($i/30)..."
             sleep 5
           done
+
+          echo "[PRL] ERROR: Failed to obtain IP for VM."
           exit 1
 
-      # Wait for ping
+      #######################################################################
+      # 4. WAIT FOR PING
+      #######################################################################
       - name: Wait for host to respond to ping
         run: |
+          echo "[WAIT] Waiting for $VM_IP to respond to ping..."
           for i in {1..60}; do
-            if ping -c1 -W1 "$VM_IP" &>/dev/null; then exit 0; fi
+            if ping -c1 -W1 "$VM_IP" &>/dev/null; then
+              echo "[WAIT] Host is responding to ping (attempt $i)."
+              exit 0
+            fi
+            echo "[WAIT] Host not up yet ($i/60)..."
             sleep 5
           done
+
+          echo "[WAIT] ERROR: Host never responded to ping."
           exit 1
 
-      # Wait for SSH port
+      #######################################################################
+      # 5. WAIT FOR SSH
+      #######################################################################
       - name: Wait for SSH to be ready
         run: |
+          echo "[WAIT] Waiting for SSH on $VM_IP:22..."
           for i in {1..60}; do
-            if nc -z "$VM_IP" 22; then exit 0; fi
+            if nc -z "$VM_IP" 22; then
+              echo "[WAIT] SSH is available (attempt $i)."
+              exit 0
+            fi
+            echo "[WAIT] SSH not ready yet ($i/60)..."
             sleep 5
           done
+
+          echo "[WAIT] ERROR: SSH never became ready."
           exit 1
 
-      # Run OpenSCAP scan & remediation
+      #######################################################################
+      # 6. RUN OPENSCAP SCAN + REMEDIATION
+      #######################################################################
       - name: Run OpenSCAP STIG scan + remediate on VM
         run: |
+          echo "[SSH] Running STIG scan on $SSH_USER@$VM_IP ..."
           ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP" 'bash -s' << 'EOF'
           set -euo pipefail
 
-          # Ensure OpenSCAP is installed
+          echo "[REMOTE] Checking for OpenSCAP..."
           if ! command -v oscap >/dev/null; then
             sudo dnf install -y openscap-scanner scap-security-guide
           fi
@@ -85,6 +118,7 @@ jobs:
           sudo mkdir -p "$OUT_DIR"
           cd "$OUT_DIR"
 
+          echo "[REMOTE] Running scan + remediation..."
           set +e
           sudo oscap xccdf eval \
             --profile "$PROFILE_ID" \
@@ -95,20 +129,33 @@ jobs:
           OSCAP_RC=$?
           set -e
 
+          echo "[REMOTE] OpenSCAP exit code: $OSCAP_RC"
           echo "$OSCAP_RC" | sudo tee "$OUT_DIR/oscap_exit_code" >/dev/null
+
           exit 0
           EOF
 
-      # Copy results back
+      #######################################################################
+      # 7. COPY REPORTS FROM VM
+      #######################################################################
       - name: Copy OpenSCAP reports from VM
         if: always()
         run: |
           mkdir -p openscap-output
-          scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP:/var/tmp/openscap/report.html" openscap-output/ || true
-          scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP:/var/tmp/openscap/results-arf.xml" openscap-output/ || true
-          scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP:/var/tmp/openscap/oscap_exit_code" openscap-output/ || echo "1" > openscap-output/oscap_exit_code
+          echo "[COPY] Downloading scan artifacts..."
 
-      # Upload artifacts
+          scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$SSH_USER@$VM_IP:/var/tmp/openscap/report.html" openscap-output/ || echo "[WARN] Missing report.html"
+
+          scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$SSH_USER@$VM_IP:/var/tmp/openscap/results-arf.xml" openscap-output/ || echo "[WARN] Missing results-arf.xml"
+
+          scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$SSH_USER@$VM_IP:/var/tmp/openscap/oscap_exit_code" openscap-output/ || echo "1" > openscap-output/oscap_exit_code
+
+      #######################################################################
+      # 8. UPLOAD ARTIFACTS
+      #######################################################################
       - name: Upload OpenSCAP artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -116,17 +163,29 @@ jobs:
           name: openscap-report
           path: openscap-output/*
 
-      # Fail build if OpenSCAP returned non-zero
+      #######################################################################
+      # 9. FAIL OR PASS JOB
+      #######################################################################
       - name: Fail job if OpenSCAP reported failures
         if: always()
         run: |
           CODE=$(cat openscap-output/oscap_exit_code || echo 1)
-          echo "OpenSCAP exit code: $CODE"
-          if [ "$CODE" -ne 0 ]; then exit 1; fi
+          echo "[RESULT] OpenSCAP exit code: $CODE"
 
-      # Delete cloned VM
+          if [ "$CODE" -ne 0 ]; then
+            echo "::error::OpenSCAP scan failed with code $CODE"
+            exit 1
+          fi
+
+          echo "[RESULT] OpenSCAP scan PASSED."
+
+      #######################################################################
+      # 10. CLEAN UP VM
+      #######################################################################
       - name: Stop and delete VM (cleanup)
         if: always()
         run: |
+          echo "[CLEANUP] Stopping and deleting cloned VM..."
           prlctl stop "$VM_UUID" --kill || true
           prlctl delete "$VM_UUID" || true
+          echo "[CLEANUP] VM removed."
