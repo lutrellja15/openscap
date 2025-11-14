@@ -1,0 +1,42 @@
+name: OpenSCAP STIG Scan
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  openscap_scan:
+    name: Run OpenSCAP STIG scan
+    runs-on: self-hosted    # your RHEL VM runner
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Show OS info
+        run: |
+          uname -a
+          cat /etc/os-release || true
+
+      - name: Ensure OpenSCAP is installed (safety)
+        run: |
+          if ! command -v oscap >/dev/null 2>&1; then
+            echo "[INFO] Installing OpenSCAP and SCAP content..."
+            sudo dnf install -y openscap-scanner scap-security-guide
+          else
+            echo "[INFO] OpenSCAP already installed."
+          fi
+
+      - name: Run OpenSCAP STIG scan
+        env:
+          PROFILE_ID: xccdf_org.ssgproject.content_profile_stig
+          CONTENT: /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml
+        run: |
+          ./run_openscap_stig.sh
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openscap-report
+          path: openscap-output/report.html
