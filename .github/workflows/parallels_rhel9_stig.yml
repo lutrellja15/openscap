@@ -100,7 +100,7 @@ jobs:
       - name: Run OpenSCAP STIG scan + remediate on VM
         run: |
           echo "[SSH] Connecting to $SSH_USER@$VM_IP to run OpenSCAP..."
-          ssh -o StrictHostKeyChecking=no "$SSH_USER@$VM_IP" 'bash -s' << 'EOF'
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP" 'bash -s' << 'EOF'
           set -euo pipefail
 
           echo "[REMOTE] OS info:"
@@ -141,9 +141,9 @@ jobs:
         if: always()
         run: |
           mkdir -p openscap-output
-          scp -o StrictHostKeyChecking=no "$SSH_USER@$VM_IP:/var/tmp/openscap/report.html" openscap-output/ || echo "[WARN] report.html not found"
-          scp -o StrictHostKeyChecking=no "$SSH_USER@$VM_IP:/var/tmp/openscap/results-arf.xml" openscap-output/ || echo "[WARN] results-arf.xml not found"
-          scp -o StrictHostKeyChecking=no "$SSH_USER@$VM_IP:/var/tmp/openscap/oscap_exit_code" openscap-output/ || echo "1" > openscap-output/oscap_exit_code
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP:/var/tmp/openscap/report.html" openscap-output/ || echo "[WARN] report.html not found"
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP:/var/tmp/openscap/results-arf.xml" openscap-output/ || echo "[WARN] results-arf.xml not found"
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP:/var/tmp/openscap/oscap_exit_code" openscap-output/ || echo "1" > openscap-output/oscap_exit_code
 
       # 8) Upload artifacts to GitHub (always)
       - name: Upload OpenSCAP artifacts
