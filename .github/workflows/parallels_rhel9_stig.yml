@@ -10,7 +10,7 @@ jobs:
     runs-on: self-hosted    # your Mac runner with Parallels
 
     env:
-      VM_TEMPLATE_UUID: <PUT-YOUR-CIS-TEMPLATE-UUID-HERE>
+      VM_TEMPLATE_UUID: 0f50f2b4-c33d-4a02-b253-aa135eccf095
       VM_NAME: rhel9-baseline-${{ github.run_id }}
       SSH_USER: maintainer     # maintainer account on the VM
 
