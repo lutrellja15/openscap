@@ -150,6 +150,11 @@ jobs:
             echo "[REMOTE] ERROR: results-arf.xml not found; setting score to 0."
             echo "0" | sudo tee "$OUT_DIR/compliance_score" >/dev/null
           fi
+
+          echo "[REMOTE] Fixing file permissions for artifact copy..."
+          sudo chown maintainer:maintainer "$OUT_DIR"/*
+          sudo chmod 644 "$OUT_DIR"/*
+
           EOF
 
       #######################################################################
@@ -164,25 +169,25 @@ jobs:
           # REPORT.HTML
           if scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             "$SSH_USER@$VM_IP:/var/tmp/openscap/report.html" openscap-output/; then
-            echo "[COPY] ✔ report.html copied successfully."
+            echo "[COPY] [✔] report.html copied successfully."
           else
-            echo "[COPY] ❌ report.html missing."
+            echo "[COPY] [X] report.html missing."
           fi
 
           # RESULTS-ARF.XML
           if scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             "$SSH_USER@$VM_IP:/var/tmp/openscap/results-arf.xml" openscap-output/; then
-            echo "[COPY] ✔ results-arf.xml copied successfully."
+            echo "[COPY] [✔] results-arf.xml copied successfully."
           else
-            echo "[COPY] ❌ results-arf.xml missing."
+            echo "[COPY] [X] results-arf.xml missing."
           fi
 
           # EXIT CODE FILE
           if scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             "$SSH_USER@$VM_IP:/var/tmp/openscap/oscap_exit_code" openscap-output/; then
-            echo "[COPY] ✔ oscap_exit_code copied successfully."
+            echo "[COPY] [✔] oscap_exit_code copied successfully."
           else
-            echo "[COPY] ❌ oscap_exit_code missing; defaulting to 2."
+            echo "[COPY] [X] oscap_exit_code missing; defaulting to 2."
             echo "2" > openscap-output/oscap_exit_code
           fi
 
