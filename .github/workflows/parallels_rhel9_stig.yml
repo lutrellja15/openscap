@@ -157,14 +157,22 @@ jobs:
             echo "0" | sudo tee "$OUT_DIR/compliance_score" >/dev/null
           fi
 
-          echo "[REMOTE] Counting severity levels..."
-          # Count HIGH findings
-          sudo grep -o 'severity="high"' results-arf.xml | wc -l | sudo tee "$OUT_DIR/high_count" >/dev/null
-          # Count MEDIUM findings
-          sudo grep -o 'severity="medium"' results-arf.xml | wc -l | sudo tee "$OUT_DIR/medium_count" >/dev/null
-          # Count LOW findings
-          sudo grep -o 'severity="low"' results-arf.xml | wc -l | sudo tee "$OUT_DIR/low_count" >/dev/null
+          echo "[REMOTE] Counting severity levels for FAILED rules only..."
 
+          # High severity FAILs
+          sudo grep -B20 -A5 '<result>fail</result>' results-arf.xml \
+          | grep -o 'severity="high"' \
+          | wc -l | sudo tee "$OUT_DIR/high_count" >/dev/null
+
+          # Medium severity FAILs
+          sudo grep -B20 -A5 '<result>fail</result>' results-arf.xml \
+          | grep -o 'severity="medium"' \
+          | wc -l | sudo tee "$OUT_DIR/medium_count" >/dev/null
+
+          # Low severity FAILs
+          sudo grep -B20 -A5 '<result>fail</result>' results-arf.xml \
+          | grep -o 'severity="low"' \
+          | wc -l | sudo tee "$OUT_DIR/low_count" >/dev/null
           echo "[REMOTE] Fixing file permissions for artifact copy..."
           sudo chown maintainer:maintainer "$OUT_DIR"/* || true
           sudo chmod 644 "$OUT_DIR"/* || true
