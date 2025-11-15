@@ -1,4 +1,4 @@
-name: Parallels RHEL9 Baseline + STIG (Scan Only)
+name: RHEL_STIG  # CIS Level 1 sanity-check pipeline
 
 on:
   push:
@@ -7,10 +7,10 @@ on:
 
 jobs:
   build_and_stig:
-    runs-on: self-hosted    # your Mac with Parallels + runner
+    runs-on: self-hosted    # your Mac runner with Parallels
 
     env:
-      VM_TEMPLATE_UUID: 0f50f2b4-c33d-4a02-b253-aa135eccf095
+      VM_TEMPLATE_UUID: <PUT-YOUR-CIS-TEMPLATE-UUID-HERE>
       VM_NAME: rhel9-baseline-${{ github.run_id }}
       SSH_USER: maintainer     # maintainer account on the VM
 
@@ -100,11 +100,11 @@ jobs:
           exit 1
 
       #######################################################################
-      # 6. RUN OPENSCAP SCAN (NO REMEDIATION)
+      # 6. RUN OPENSCAP SCAN (CIS LEVEL 1, NO REMEDIATION)
       #######################################################################
-      - name: Run OpenSCAP STIG scan (scan only) on VM
+      - name: Run OpenSCAP CIS Level 1 scan on VM
         run: |
-          echo "[SSH] Running STIG scan on $SSH_USER@$VM_IP ..."
+          echo "[SSH] Running CIS Level 1 scan on $SSH_USER@$VM_IP ..."
           ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP" 'bash -s' << 'EOF'
           set -euo pipefail
 
@@ -118,17 +118,23 @@ jobs:
           CONTENT="/usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml"
           OUT_DIR="/var/tmp/openscap"
 
-          echo "[REMOTE] Preparing output directory: $OUT_DIR"
+          echo "[REMOTE] Resetting openscap output directory..."
+          sudo rm -rf "$OUT_DIR"
           sudo mkdir -p "$OUT_DIR"
-          sudo chmod -R 777 "$OUT_DIR"
+          sudo chmod 777 "$OUT_DIR"
           echo "[REMOTE] Output directory is ready: $OUT_DIR"
+
           cd "$OUT_DIR"
 
-          echo "[REMOTE] Running STIG scan (NO remediation)..."
+          echo "[REMOTE] Running CIS Level 1 scan (NO remediation)..."
           echo "[REMOTE] Command: sudo oscap xccdf eval --profile \"$PROFILE_ID\" --results-arf results-arf.xml --report report.html \"$CONTENT\""
 
           set +e
-          sudo oscap xccdf eval --profile "$PROFILE_ID" --results-arf results-arf.xml --report report.html "$CONTENT"
+          sudo oscap xccdf eval \
+            --profile "$PROFILE_ID" \
+            --results-arf results-arf.xml \
+            --report report.html \
+            "$CONTENT"
           OSCAP_RC=$?
           set -e
 
@@ -151,10 +157,18 @@ jobs:
             echo "0" | sudo tee "$OUT_DIR/compliance_score" >/dev/null
           fi
 
+          echo "[REMOTE] Counting severity levels..."
+          # Count HIGH findings
+          sudo grep -o 'severity="high"' results-arf.xml | wc -l | sudo tee "$OUT_DIR/high_count" >/dev/null
+          # Count MEDIUM findings
+          sudo grep -o 'severity="medium"' results-arf.xml | wc -l | sudo tee "$OUT_DIR/medium_count" >/dev/null
+          # Count LOW findings
+          sudo grep -o 'severity="low"' results-arf.xml | wc -l | sudo tee "$OUT_DIR/low_count" >/dev/null
+
           echo "[REMOTE] Fixing file permissions for artifact copy..."
           sudo chown maintainer:maintainer "$OUT_DIR"/* || true
           sudo chmod 644 "$OUT_DIR"/* || true
-          
+
           EOF
 
       #######################################################################
@@ -169,34 +183,57 @@ jobs:
           # REPORT.HTML
           if scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             "$SSH_USER@$VM_IP:/var/tmp/openscap/report.html" openscap-output/; then
-            echo "[COPY] [✔] report.html copied successfully."
+            echo "[COPY] ✔ report.html copied successfully."
           else
-            echo "[COPY] [X] report.html missing."
+            echo "[COPY] ❌ report.html missing."
           fi
 
           # RESULTS-ARF.XML
           if scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             "$SSH_USER@$VM_IP:/var/tmp/openscap/results-arf.xml" openscap-output/; then
-            echo "[COPY] [✔] results-arf.xml copied successfully."
+            echo "[COPY] ✔ results-arf.xml copied successfully."
           else
-            echo "[COPY] [X] results-arf.xml missing."
+            echo "[COPY] ❌ results-arf.xml missing."
           fi
 
           # EXIT CODE FILE
           if scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             "$SSH_USER@$VM_IP:/var/tmp/openscap/oscap_exit_code" openscap-output/; then
-            echo "[COPY] [✔] oscap_exit_code copied successfully."
+            echo "[COPY] ✔ oscap_exit_code copied successfully."
           else
-            echo "[COPY] [X] oscap_exit_code missing; defaulting to 2."
-            echo "2" > openscap-output/oscap_exit_code
+            echo "[COPY] ❌ oscap_exit_code missing."
           fi
 
           # COMPLIANCE SCORE
           if scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             "$SSH_USER@$VM_IP:/var/tmp/openscap/compliance_score" openscap-output/; then
-            echo "[COPY] [✔] compliance_score copied successfully."
+            echo "[COPY] ✔ compliance_score copied successfully."
           else
-            echo "[COPY] [X] compliance_score missing."
+            echo "[COPY] ❌ compliance_score missing."
+          fi
+
+          # HIGH COUNT
+          if scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$SSH_USER@$VM_IP:/var/tmp/openscap/high_count" openscap-output/; then
+            echo "[COPY] ✔ high_count copied successfully."
+          else
+            echo "[COPY] ❌ high_count missing."
+          fi
+
+          # MEDIUM COUNT
+          if scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$SSH_USER@$VM_IP:/var/tmp/openscap/medium_count" openscap-output/; then
+            echo "[COPY] ✔ medium_count copied successfully."
+          else
+            echo "[COPY] ❌ medium_count missing."
+          fi
+
+          # LOW COUNT
+          if scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$SSH_USER@$VM_IP:/var/tmp/openscap/low_count" openscap-output/; then
+            echo "[COPY] ✔ low_count copied successfully."
+          else
+            echo "[COPY] ❌ low_count missing."
           fi
 
       #######################################################################
@@ -209,7 +246,7 @@ jobs:
           name: openscap-report
           path: openscap-output/*
 
-     #######################################################################
+      #######################################################################
       # 9. ENFORCE 85% COMPLIANCE THRESHOLD
       #######################################################################
       - name: Enforce 85% compliance threshold
@@ -237,17 +274,51 @@ jobs:
 
           echo "[RESULT] OpenSCAP compliance score: ${PCT}%"
 
+          # Export for later steps (summary)
+          if [ -n "$PCT" ]; then
+            echo "COMPLIANCE_PCT=$PCT" >> $GITHUB_ENV
+          fi
+
           PASS=$(awk -v s="$PCT" 'BEGIN { if (s+0 >= 85.0) print "yes"; else print "no"; }')
           if [ "$PASS" = "yes" ]; then
+            echo "COMPLIANCE_STATUS=PASS" >> $GITHUB_ENV
             echo "[RESULT] ✅ Compliance ${PCT}% >= 85% threshold; pipeline PASS."
             exit 0
           else
+            echo "COMPLIANCE_STATUS=FAIL" >> $GITHUB_ENV
             echo "::error::❌ Compliance ${PCT}% is below 85% threshold; pipeline FAIL."
             exit 1
           fi
 
       #######################################################################
-      # 10. CLEAN UP VM
+      # 10. RECORD SUMMARY (WITH HIGH/MED/LOW)
+      #######################################################################
+      - name: Record compliance summary
+        if: always()
+        run: |
+          P="${COMPLIANCE_PCT:-unknown}"
+          S="${COMPLIANCE_STATUS:-FAIL}"
+          EMOJI="❌"
+          if [ "$S" = "PASS" ]; then EMOJI="✅"; fi
+
+          HIGH=$(cat openscap-output/high_count 2>/dev/null || echo "0")
+          MED=$(cat openscap-output/medium_count 2>/dev/null || echo "0")
+          LOW=$(cat openscap-output/low_count 2>/dev/null || echo "0")
+
+          echo "$EMOJI **RHEL CIS Compliance Check**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Score:** ${P}%" >> $GITHUB_STEP_SUMMARY
+          echo "- **Threshold:** 85%" >> $GITHUB_STEP_SUMMARY
+          echo "- **Result:** ${S}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔎 Findings Breakdown" >> $GITHUB_STEP_SUMMARY
+          echo "- **High Severity:** ${HIGH}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Medium Severity:** ${MED}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Low Severity:** ${LOW}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Artifacts with the full OpenSCAP report are attached to this workflow run." >> $GITHUB_STEP_SUMMARY
+
+      #######################################################################
+      # 11. CLEAN UP VM
       #######################################################################
       - name: Stop and delete VM (cleanup)
         if: always()
