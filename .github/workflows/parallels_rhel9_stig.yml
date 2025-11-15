@@ -120,7 +120,7 @@ jobs:
 
           echo "[REMOTE] Preparing output directory: $OUT_DIR"
           sudo mkdir -p "$OUT_DIR"
-          sudo chmod 777 "$OUT_DIR"
+          sudo chmod -R 777 "$OUT_DIR"
           echo "[REMOTE] Output directory is ready: $OUT_DIR"
           cd "$OUT_DIR"
 
@@ -134,6 +134,22 @@ jobs:
 
           echo "[REMOTE] OpenSCAP exit code: $OSCAP_RC"
           echo "$OSCAP_RC" | sudo tee "$OUT_DIR/oscap_exit_code" >/dev/null
+
+          echo "[REMOTE] Extracting compliance score from results-arf.xml..."
+          if [ -f results-arf.xml ]; then
+            SCORE_LINE=$(grep -m1 "<score" results-arf.xml || true)
+            if [ -n "$SCORE_LINE" ]; then
+              SCORE_VAL=$(echo "$SCORE_LINE" | sed -E 's/.*<score[^>]*>([0-9.]+)<\/score>.*/\1/')
+              echo "$SCORE_VAL" | sudo tee "$OUT_DIR/compliance_score" >/dev/null
+              echo "[REMOTE] Raw compliance score value: $SCORE_VAL"
+            else
+              echo "[REMOTE] WARNING: Could not find <score> in results-arf.xml, setting score to 0."
+              echo "0" | sudo tee "$OUT_DIR/compliance_score" >/dev/null
+            fi
+          else
+            echo "[REMOTE] ERROR: results-arf.xml not found; setting score to 0."
+            echo "0" | sudo tee "$OUT_DIR/compliance_score" >/dev/null
+          fi
           EOF
 
       #######################################################################
@@ -180,32 +196,42 @@ jobs:
           name: openscap-report
           path: openscap-output/*
 
+     #######################################################################
+      # 9. ENFORCE 85% COMPLIANCE THRESHOLD
       #######################################################################
-      # 9. FAIL OR PASS JOB (BASED ON EXIT CODE)
-      #######################################################################
-      - name: Fail job only if OpenSCAP ERROR occurred
+      - name: Enforce 85% compliance threshold
         if: always()
         run: |
-          CODE=$(cat openscap-output/oscap_exit_code || echo 2)
-          echo "[RESULT] OpenSCAP exit code: $CODE"
-
-          if [ "$CODE" -eq 2 ]; then
-            echo "::error::OpenSCAP encountered an ERROR (code 2)."
+          if [ ! -f openscap-output/compliance_score ]; then
+            echo "::error::Missing compliance_score file; failing pipeline."
             exit 1
           fi
 
-          if [ "$CODE" -eq 1 ]; then
-            echo "[RESULT] OpenSCAP completed successfully WITH findings (code 1)."
-            exit 0
+          RAW=$(tr -d ' \t\r\n' < openscap-output/compliance_score)
+          if [ -z "$RAW" ]; then
+            echo "::error::Empty compliance_score value; failing pipeline."
+            exit 1
           fi
 
-          if [ "$CODE" -eq 0 ]; then
-            echo "[RESULT] OpenSCAP completed successfully with NO findings (code 0)."
-            exit 0
-          fi
+          # Normalize score: if <= 1.0, treat as fraction and convert to percentage
+          PCT=$(awk -v v="$RAW" 'BEGIN {
+            if (v+0 <= 1.0000001) {
+              printf "%.2f", v*100;
+            } else {
+              printf "%.2f", v;
+            }
+          }')
 
-          echo "::error::Unexpected OpenSCAP exit code: $CODE"
-          exit 1
+          echo "[RESULT] OpenSCAP compliance score: ${PCT}%"
+
+          PASS=$(awk -v s="$PCT" 'BEGIN { if (s+0 >= 85.0) print "yes"; else print "no"; }')
+          if [ "$PASS" = "yes" ]; then
+            echo "[RESULT] ✅ Compliance ${PCT}% >= 85% threshold; pipeline PASS."
+            exit 0
+          else
+            echo "::error::❌ Compliance ${PCT}% is below 85% threshold; pipeline FAIL."
+            exit 1
+          fi
 
       #######################################################################
       # 10. CLEAN UP VM
