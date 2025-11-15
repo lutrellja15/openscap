@@ -120,6 +120,8 @@ jobs:
 
           echo "[REMOTE] Preparing output directory: $OUT_DIR"
           sudo mkdir -p "$OUT_DIR"
+          sudo chmod 777 "$OUT_DIR"
+          echo "[REMOTE] Output directory is ready: $OUT_DIR"
           cd "$OUT_DIR"
 
           echo "[REMOTE] Running STIG scan (NO remediation)..."
