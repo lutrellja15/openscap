@@ -2,7 +2,7 @@ name: Parallels RHEL9 Baseline + STIG (Scan Only)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch: {}   # still allow manual runs
 
 jobs:
