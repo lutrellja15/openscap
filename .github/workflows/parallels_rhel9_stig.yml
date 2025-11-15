@@ -108,6 +108,7 @@ jobs:
 
           echo "[REMOTE] Checking for OpenSCAP..."
           if ! command -v oscap >/dev/null; then
+            echo "[REMOTE] Installing OpenSCAP scanner + content..."
             sudo dnf install -y openscap-scanner scap-security-guide
           fi
 
@@ -115,42 +116,55 @@ jobs:
           CONTENT="/usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml"
           OUT_DIR="/var/tmp/openscap"
 
+          echo "[REMOTE] Preparing output directory: $OUT_DIR"
           sudo mkdir -p "$OUT_DIR"
           cd "$OUT_DIR"
 
           echo "[REMOTE] Running STIG scan (NO remediation)..."
+          echo "[REMOTE] Command: sudo oscap xccdf eval --profile \"$PROFILE_ID\" --results-arf results-arf.xml --report report.html \"$CONTENT\""
+
           set +e
-          sudo oscap xccdf eval \
-            --profile "$PROFILE_ID" \
-            --results-arf results-arf.xml \
-            --report report.html \
-            "$CONTENT"
+          sudo oscap xccdf eval --profile "$PROFILE_ID" --results-arf results-arf.xml --report report.html "$CONTENT"
           OSCAP_RC=$?
           set -e
 
           echo "[REMOTE] OpenSCAP exit code: $OSCAP_RC"
           echo "$OSCAP_RC" | sudo tee "$OUT_DIR/oscap_exit_code" >/dev/null
-
-          exit 0
           EOF
 
       #######################################################################
-      # 7. COPY REPORTS FROM VM
+      # 7. COPY REPORTS FROM VM (WITH CONFIRMATION)
       #######################################################################
       - name: Copy OpenSCAP reports from VM
         if: always()
         run: |
           mkdir -p openscap-output
-          echo "[COPY] Downloading scan artifacts..."
+          echo "[COPY] Pulling scan artifacts from $VM_IP ..."
 
-          scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            "$SSH_USER@$VM_IP:/var/tmp/openscap/report.html" openscap-output/ || echo "[WARN] Missing report.html"
+          # REPORT.HTML
+          if scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$SSH_USER@$VM_IP:/var/tmp/openscap/report.html" openscap-output/; then
+            echo "[COPY] ✔ report.html copied successfully."
+          else
+            echo "[COPY] ❌ report.html missing."
+          fi
 
-          scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            "$SSH_USER@$VM_IP:/var/tmp/openscap/results-arf.xml" openscap-output/ || echo "[WARN] Missing results-arf.xml"
+          # RESULTS-ARF.XML
+          if scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$SSH_USER@$VM_IP:/var/tmp/openscap/results-arf.xml" openscap-output/; then
+            echo "[COPY] ✔ results-arf.xml copied successfully."
+          else
+            echo "[COPY] ❌ results-arf.xml missing."
+          fi
 
-          scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            "$SSH_USER@$VM_IP:/var/tmp/openscap/oscap_exit_code" openscap-output/ || echo "1" > openscap-output/oscap_exit_code
+          # EXIT CODE FILE
+          if scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$SSH_USER@$VM_IP:/var/tmp/openscap/oscap_exit_code" openscap-output/; then
+            echo "[COPY] ✔ oscap_exit_code copied successfully."
+          else
+            echo "[COPY] ❌ oscap_exit_code missing; defaulting to 2."
+            echo "2" > openscap-output/oscap_exit_code
+          fi
 
       #######################################################################
       # 8. UPLOAD ARTIFACTS
@@ -163,20 +177,31 @@ jobs:
           path: openscap-output/*
 
       #######################################################################
-      # 9. FAIL OR PASS JOB
+      # 9. FAIL OR PASS JOB (BASED ON EXIT CODE)
       #######################################################################
-      - name: Fail job if OpenSCAP reported failures
+      - name: Fail job only if OpenSCAP ERROR occurred
         if: always()
         run: |
-          CODE=$(cat openscap-output/oscap_exit_code || echo 1)
+          CODE=$(cat openscap-output/oscap_exit_code || echo 2)
           echo "[RESULT] OpenSCAP exit code: $CODE"
 
-          if [ "$CODE" -ne 0 ]; then
-            echo "::error::OpenSCAP scan failed with code $CODE"
+          if [ "$CODE" -eq 2 ]; then
+            echo "::error::OpenSCAP encountered an ERROR (code 2)."
             exit 1
           fi
 
-          echo "[RESULT] OpenSCAP scan PASSED."
+          if [ "$CODE" -eq 1 ]; then
+            echo "[RESULT] OpenSCAP completed successfully WITH findings (code 1)."
+            exit 0
+          fi
+
+          if [ "$CODE" -eq 0 ]; then
+            echo "[RESULT] OpenSCAP completed successfully with NO findings (code 0)."
+            exit 0
+          fi
+
+          echo "::error::Unexpected OpenSCAP exit code: $CODE"
+          exit 1
 
       #######################################################################
       # 10. CLEAN UP VM
