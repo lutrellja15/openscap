@@ -135,14 +135,9 @@ jobs:
           echo "[REMOTE] OpenSCAP exit code: $OSCAP_RC"
           echo "$OSCAP_RC" | sudo tee "$OUT_DIR/oscap_exit_code" >/dev/null
 
-          # IMPORTANT: fix ownership/permissions BEFORE we try to read results-arf.xml
-          echo "[REMOTE] Fixing file permissions for artifact copy..."
-          sudo chown maintainer:maintainer "$OUT_DIR"/* || true
-          sudo chmod 644 "$OUT_DIR"/* || true
-
           echo "[REMOTE] Extracting compliance score from results-arf.xml..."
-          if [ -f results-arf.xml ]; then
-            SCORE_LINE=$(grep -m1 "<score" results-arf.xml || true)
+          if sudo test -f "$OUT_DIR/results-arf.xml"; then
+            SCORE_LINE=$(sudo grep -m1 "<score" "$OUT_DIR/results-arf.xml" || true)
             if [ -n "$SCORE_LINE" ]; then
               SCORE_VAL=$(echo "$SCORE_LINE" | sed -E 's/.*<score[^>]*>([0-9.]+)<\/score>.*/\1/')
               echo "$SCORE_VAL" | sudo tee "$OUT_DIR/compliance_score" >/dev/null
@@ -155,6 +150,11 @@ jobs:
             echo "[REMOTE] ERROR: results-arf.xml not found; setting score to 0."
             echo "0" | sudo tee "$OUT_DIR/compliance_score" >/dev/null
           fi
+
+          echo "[REMOTE] Fixing file permissions for artifact copy..."
+          sudo chown maintainer:maintainer "$OUT_DIR"/* || true
+          sudo chmod 644 "$OUT_DIR"/* || true
+          
           EOF
 
       #######################################################################
