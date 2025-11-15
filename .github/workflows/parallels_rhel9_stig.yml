@@ -305,17 +305,23 @@ jobs:
           MED=$(cat openscap-output/medium_count 2>/dev/null || echo "0")
           LOW=$(cat openscap-output/low_count 2>/dev/null || echo "0")
 
-          echo "$EMOJI **RHEL CIS Compliance Check**" >> $GITHUB_STEP_SUMMARY
-          echo "- **Score:** ${P}%" >> $GITHUB_STEP_SUMMARY
-          echo "- **Threshold:** 85%" >> $GITHUB_STEP_SUMMARY
-          echo "- **Result:** ${S}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔎 Findings Breakdown" >> $GITHUB_STEP_SUMMARY
-          echo "- **High Severity:** ${HIGH}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Medium Severity:** ${MED}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Low Severity:** ${LOW}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Artifacts with the full OpenSCAP report are attached to this workflow run." >> $GITHUB_STEP_SUMMARY
+          echo "[SUMMARY] Compliance score: ${P}%"
+          echo "[SUMMARY] Result: ${S}"
+          echo "[SUMMARY] High: ${HIGH}, Medium: ${MED}, Low: ${LOW}"
+
+          {
+            echo "$EMOJI **RHEL CIS Compliance Check**"
+            echo "- **Score:** ${P}%"
+            echo "- **Threshold:** 85%"
+            echo "- **Result:** ${S}"
+            echo ""
+            echo "### 🔎 Findings Breakdown"
+            echo "- **High Severity:** ${HIGH}"
+            echo "- **Medium Severity:** ${MED}"
+            echo "- **Low Severity:** ${LOW}"
+            echo ""
+            echo "Artifacts with the full OpenSCAP report are attached to this workflow run."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       #######################################################################
       # 11. CLEAN UP VM
