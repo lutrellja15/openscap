@@ -1,4 +1,4 @@
-name: Parallels RHEL9 Baseline + STIG (Partial Remediation)
+name: Parallels RHEL9 Baseline + STIG (Scan Only)
 
 on:
   workflow_dispatch: {}   # manual trigger for now
@@ -98,9 +98,9 @@ jobs:
           exit 1
 
       #######################################################################
-      # 6. RUN OPENSCAP SCAN + PARTIAL REMEDIATION
+      # 6. RUN OPENSCAP SCAN (NO REMEDIATION)
       #######################################################################
-      - name: Run OpenSCAP STIG scan + partial remediation on VM
+      - name: Run OpenSCAP STIG scan (scan only) on VM
         run: |
           echo "[SSH] Running STIG scan on $SSH_USER@$VM_IP ..."
           ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$VM_IP" 'bash -s' << 'EOF'
@@ -118,9 +118,13 @@ jobs:
           sudo mkdir -p "$OUT_DIR"
           cd "$OUT_DIR"
 
-          echo "[REMOTE] Running scan + PARTIAL remediation (skipping risky rules)..."
+          echo "[REMOTE] Running STIG scan (NO remediation)..."
           set +e
-          sudo oscap xccdf eval --profile "$PROFILE_ID" --skip-rule xccdf_org.ssgproject.content_rule_sudo_remove_nopasswd --skip-rule xccdf_org.ssgproject.content_rule_require_single_user_mode_auth --skip-rule xccdf_org.ssgproject.content_rule_grub2_enable_fips_mode --skip-rule xccdf_org.ssgproject.content_rule_grub2_password --skip-rule xccdf_org.ssgproject.content_rule_selinux_state --skip-rule xccdf_org.ssgproject.content_rule_selinux_policytype --skip-rule xccdf_org.ssgproject.content_rule_selinux_user_login_roles --skip-rule xccdf_org.ssgproject.content_rule_mount_option_nodev_nonroot_local_partitions --skip-rule xccdf_org.ssgproject.content_rule_mount_option_noexec_nonroot_local_partitions --skip-rule xccdf_org.ssgproject.content_rule_mount_option_nosuid_nonroot_local_partitions --skip-rule xccdf_org.ssgproject.content_rule_mount_option_boot_nodev --skip-rule xccdf_org.ssgproject.content_rule_mount_option_boot_noexec --skip-rule xccdf_org.ssgproject.content_rule_mount_option_boot_nosuid --skip-rule xccdf_org.ssgproject.content_rule_partition_for_var --skip-rule xccdf_org.ssgproject.content_rule_partition_for_var_log --skip-rule xccdf_org.ssgproject.content_rule_partition_for_home --skip-rule xccdf_org.ssgproject.content_rule_partition_for_tmp --skip-rule xccdf_org.ssgproject.content_rule_partition_for_var_tmp --skip-rule xccdf_org.ssgproject.content_rule_sshd_disable_root_login --skip-rule xccdf_org.ssgproject.content_rule_sshd_disable_empty_passwords --skip-rule xccdf_org.ssgproject.content_rule_sshd_disable_rhosts --remediate --results-arf results-arf.xml --report report.html "$CONTENT"
+          sudo oscap xccdf eval \
+            --profile "$PROFILE_ID" \
+            --results-arf results-arf.xml \
+            --report report.html \
+            "$CONTENT"
           OSCAP_RC=$?
           set -e
 
